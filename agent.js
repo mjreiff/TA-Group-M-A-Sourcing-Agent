@@ -14,7 +14,6 @@ const EMAIL_FROM = process.env.EMAIL_FROM;               // e.g. digest@yourdoma
 // ── YOUR ACQUISITION CRITERIA ────────────────────────────────
 // Edit these to match your thesis. Commit and push to update.
 const CRITERIA = {
-const CRITERIA = {
   sectors: "IT Staffing, IT Consulting, IT Managed Services, IT MSP",
   geography: "United States, Canada, Latin America",
   revenueMin: "$1,000,000",
