@@ -14,6 +14,7 @@ const EMAIL_FROM = process.env.EMAIL_FROM;               // e.g. digest@yourdoma
 // ── YOUR ACQUISITION CRITERIA ────────────────────────────────
 // Edit these to match your thesis. Commit and push to update.
 const CRITERIA = {
+const CRITERIA = {
   sectors: "IT Staffing, IT Consulting, IT Managed Services, IT MSP",
   geography: "United States, Canada, Latin America",
   revenueMin: "$1,000,000",
@@ -21,7 +22,27 @@ const CRITERIA = {
   ebitdaMin: "$300,000",
   ebitdaMax: "$6,000,000",
   multipleMax: "10x EBITDA",
-  sources: ["BizBuySell", "Acquire.com", "Flippa", "Empire Flippers", "DealStream"],
+  mustHave: [
+    "IT staffing, consulting, or managed services focus",
+    "Profitable with positive EBITDA",
+    "Established client base",
+    "Low single-client concentration",
+    "Good gross margin and net income/revenue ratio",
+  ],
+  dealBreakers: [
+    "No non-IT businesses",
+    "No pre-revenue or loss-making businesses",
+    "No single customer above 40% of revenue",
+  ],
+  sources: [
+    "BizBuySell", "BizQuest", "BusinessBroker.net", "BusinessesForSale.com",
+    "Transworld Business Advisors", "Sunbelt Business Brokers", "Murphy Business Brokers",
+    "IT ExchangeNet", "DealStream", "WebsiteClosers", "Brampton Capital", "RoseBiz",
+    "Synergy Business Brokers", "FOCUS Investment Banking", "Corum Group",
+    "Lion Business Brokers", "Griffin Financial Group", "MKLINK MSP Marketplace",
+    "Axial.net", "Colonnade Advisors", "Generational Equity", "Benchmark International",
+    "Exit Factor",
+  ],
   notes: "Prefer low client concentration. Good gross margin. Good net income/revenue margin.",
 };
 // ─────────────────────────────────────────────────────────────
