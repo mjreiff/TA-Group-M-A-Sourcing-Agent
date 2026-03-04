@@ -1,0 +1,31 @@
+name: M&A Daily Sourcing Digest
+
+on:
+  # Runs every weekday at 7:00 AM UTC (adjust timezone below)
+  schedule:
+    - cron: "0 7 * * 1-5"   # Mon–Fri 7am UTC  (change to '0 7 * * *' for every day)
+
+  # Also allows manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  run-agent:
+    name: Run M&A Sourcing Agent
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        run: node agent.js
