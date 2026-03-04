@@ -1,9 +1,7 @@
 // ============================================================
 // M&A Sourcing Agent
-// Finds real listing URLs via Claude web search, then uses
-// the search snippet (not page fetch) to get details.
-// BizBuySell blocks page fetches so we extract what we can
-// from search result snippets directly.
+// Extracts listing details from Google search snippets.
+// No page fetching needed — works around 403 blocks.
 // ============================================================
 
 const https = require("https");
@@ -12,6 +10,8 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const RESEND_API_KEY    = process.env.RESEND_API_KEY;
 const EMAIL_TO          = process.env.EMAIL_TO;
 const EMAIL_FROM        = process.env.EMAIL_FROM;
+
+const THREE_WEEKS_MS = 21 * 24 * 60 * 60 * 1000;
 
 const GATED_SOURCES = [
   { name:"Axial.net",                url:"https://www.axial.net",                                  note:"Register free. Filter by IT Services / Staffing." },
@@ -29,18 +29,70 @@ const GATED_SOURCES = [
   { name:"Exit Factor",              url:"https://www.exitfactor.com/businesses-for-sale/",         note:"Tech-enabled businesses." },
 ];
 
+// ── SEARCH QUERIES ────────────────────────────────────────────
+// Grouped by source. For poorly-indexed sites we use open-web
+// queries that still surface their listings via aggregators,
+// Google cache, and cross-listing sites.
 const SEARCH_QUERIES = [
-  'site:bizbuysell.com/business-opportunity "IT staffing" OR "IT staff augmentation"',
-  'site:bizbuysell.com/business-opportunity "managed service provider" OR "managed services"',
-  'site:bizbuysell.com/business-opportunity "MSP" OR "managed IT"',
-  'site:bizbuysell.com/business-opportunity "IT consulting" OR "technology consulting"',
-  'site:bizbuysell.com/business-opportunity "IT services" staffing OR consulting OR managed',
-  'site:bizquest.com/ad "IT staffing" OR "managed service" OR "IT consulting" OR "MSP"',
-  'site:businessbroker.net "IT staffing" OR "managed service" OR "IT consulting" for sale',
-  '"IT staffing company for sale" revenue 2025 bizbuysell OR bizquest OR businessbroker',
-  '"managed service provider for sale" revenue EBITDA 2025',
-  '"MSP for sale" revenue profitable 2025 United States',
-  '"IT consulting firm for sale" revenue 2025 United States',
+
+  // ── BizBuySell (well indexed, use site: for precision)
+  { q: 'site:bizbuysell.com/business-opportunity "IT staffing" OR "staff augmentation"',            src: "BizBuySell" },
+  { q: 'site:bizbuysell.com/business-opportunity "managed service provider" OR "managed services"', src: "BizBuySell" },
+  { q: 'site:bizbuysell.com/business-opportunity "MSP" profitable recurring revenue',               src: "BizBuySell" },
+  { q: 'site:bizbuysell.com/business-opportunity "IT consulting" OR "technology consulting"',       src: "BizBuySell" },
+  { q: 'site:bizbuysell.com/business-opportunity "IT services" staffing OR consulting OR managed',  src: "BizBuySell" },
+
+  // ── BizQuest
+  { q: 'site:bizquest.com "IT staffing" OR "managed service" OR "IT consulting" OR "MSP" for sale', src: "BizQuest" },
+  { q: 'site:bizquest.com "technology staffing" OR "IT services" OR "managed IT" for sale',         src: "BizQuest" },
+
+  // ── BusinessBroker.net
+  { q: 'site:businessbroker.net "IT staffing" OR "managed service" OR "IT consulting" for sale',   src: "BusinessBroker.net" },
+  { q: 'site:businessbroker.net "MSP" OR "technology staffing" OR "IT services" for sale',         src: "BusinessBroker.net" },
+
+  // ── BusinessesForSale.com
+  { q: 'site:businessesforsale.com "IT staffing" OR "managed service" OR "IT consulting" for sale United States', src: "BusinessesForSale.com" },
+  { q: 'site:businessesforsale.com "MSP" OR "technology staffing" OR "IT services" for sale',      src: "BusinessesForSale.com" },
+
+  // ── DealStream — try site: and natural language
+  { q: 'site:dealstream.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',       src: "DealStream" },
+  { q: 'dealstream.com IT staffing OR managed service provider OR MSP for sale listing 2025',       src: "DealStream" },
+
+  // ── Synergy Business Brokers
+  { q: 'site:synergybb.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',        src: "Synergy Business Brokers" },
+  { q: 'synergybb.com IT staffing OR MSP OR managed service provider for sale listing',             src: "Synergy Business Brokers" },
+
+  // ── IT ExchangeNet
+  { q: 'site:itexchangenet.com "for sale" IT OR MSP OR staffing OR consulting',                    src: "IT ExchangeNet" },
+  { q: 'itexchangenet.com IT staffing OR MSP OR managed service provider for sale',                 src: "IT ExchangeNet" },
+
+  // ── Brampton Capital
+  { q: 'site:bramptoncapital.com "managed service" OR "IT staffing" OR "MSP" for sale',            src: "Brampton Capital" },
+  { q: 'bramptoncapital.com MSP OR managed service provider OR IT staffing for sale listing',       src: "Brampton Capital" },
+
+  // ── WebsiteClosers
+  { q: 'site:websiteclosers.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',   src: "WebsiteClosers" },
+
+  // ── Lion Business Brokers
+  { q: 'site:lionbusinessbrokers.com "IT staffing" OR "managed service" OR "IT consulting"',       src: "Lion Business Brokers" },
+  { q: 'lionbusinessbrokers.com IT staffing OR MSP OR managed service for sale listing',            src: "Lion Business Brokers" },
+
+  // ── Acquire.com (tech-focused marketplace)
+  { q: 'site:acquire.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting" for sale', src: "Acquire.com" },
+
+  // ── MicroAcquire / Acquire
+  { q: 'acquire.com MSP OR "managed service provider" OR "IT staffing" for sale profitable',       src: "Acquire.com" },
+
+  // ── Open web — catches listings on ANY platform
+  { q: '"IT staffing company for sale" "asking price" OR "revenue" 2025 United States',            src: "General Web" },
+  { q: '"IT staffing business for sale" profitable 2025 United States OR Canada',                  src: "General Web" },
+  { q: '"managed service provider for sale" "asking price" OR "cash flow" 2025 United States',     src: "General Web" },
+  { q: '"MSP for sale" profitable revenue 2025 United States OR Canada',                           src: "General Web" },
+  { q: '"IT consulting firm for sale" "asking price" OR revenue 2025 United States',               src: "General Web" },
+  { q: '"IT consulting company for sale" profitable 2025 United States OR Canada',                 src: "General Web" },
+  { q: '"managed IT services" company for sale 2025 United States revenue profitable',             src: "General Web" },
+  { q: '"technology staffing" company for sale 2025 United States asking price',                   src: "General Web" },
+  { q: 'acquire "IT staffing" OR "managed service provider" OR "MSP" business for sale 2025',     src: "General Web" },
 ];
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -67,47 +119,50 @@ function postResend(body) {
   });
 }
 
-// ── SEARCH: get listings WITH details from search snippets ────
-// Key insight: Google search snippets contain price/revenue/description
-// data from the listing. We extract everything from the snippet, not
-// by fetching the page (which gets blocked).
-async function searchForListings(query) {
-  const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+// ── SEARCH AND EXTRACT ────────────────────────────────────────
+async function searchForListings(query, source) {
+  const threeWeeksAgo = new Date(Date.now() - THREE_WEEKS_MS);
 
   const res = await postAnthropic({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 2000,
+    max_tokens: 2500,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{
       role: "user",
       content: `Search for: ${query}
 
-Look at the search results carefully. For each result that is an individual business listing page (not a category page), extract everything visible in the search snippet — title, description, price, revenue, location, date.
+Extract every individual business-for-sale listing from the search results. Get all details visible in the snippets — title, price, revenue, location, description, date.
 
-Rules for valid listing URLs:
-- BizBuySell: must contain /business-opportunity/ AND a numeric ID at the end
-- BizQuest: must contain /ad/ 
-- BusinessBroker: must contain /listing/
-- Any other broker: must have a path with a specific listing title/ID
-- REJECT any URL that is just a category browse page
+VALID listing URL examples (specific listings, not browse pages):
+- https://www.bizbuysell.com/business-opportunity/some-title/1234567/
+- https://www.bizquest.com/ad/some-title/BQ1234/
+- https://www.businessbroker.net/listing/some-title/
+- https://dealstream.com/deal/buy/some-title--123456
+- https://synergybb.com/us-businesses-for-sale/some-title/
+- https://websiteclosers.com/listing/some-title/
+- https://lionbusinessbrokers.com/listing/some-title/
 
-Today is ${new Date().toDateString()}. Mark isNew:true if the listing appears to have been posted after ${twoWeeksAgo.toDateString()}.
+INVALID (reject these):
+- Any URL that is just a category/browse page with no specific listing ID or title slug
+- Homepages
 
-Return ONLY a raw JSON array. No markdown. No explanation. Each object:
-{
-  "name": "exact listing title from search result",
-  "listingUrl": "exact URL — copy it precisely, do not modify",
-  "source": "BizBuySell or BizQuest etc",
-  "askingPrice": "from snippet e.g. $2.5M or null",
-  "revenue": "from snippet e.g. $4.2M or null",
-  "ebitda": "from snippet e.g. $600K or null",
-  "location": "from snippet e.g. Dallas, TX or null",
-  "description": "1-2 sentence description from the search snippet",
+Today is ${new Date().toDateString()}. Mark isNew:true if listed after ${threeWeeksAgo.toDateString()}.
+
+Return ONLY a raw JSON array, no markdown:
+[{
+  "name": "exact listing title",
+  "listingUrl": "exact URL — do not modify",
+  "source": "${source}",
+  "askingPrice": "$X.XM or null",
+  "revenue": "$X.XM or null",
+  "ebitda": "$XXXk or null",
+  "location": "City, State or null",
+  "description": "2-3 sentences from snippet",
   "isNew": false,
-  "listedDate": "date if visible in snippet, else null"
-}
+  "listedDate": "date string or null"
+}]
 
-If no valid individual listing URLs found: []`
+If nothing found: []`
     }]
   });
 
@@ -123,15 +178,12 @@ If no valid individual listing URLs found: []`
     return parsed.filter(l => {
       if (!l.name || !l.listingUrl) return false;
       try {
-        const u = new URL(l.listingUrl);
-        const p = u.pathname;
-        // Must look like a specific listing, not a category page
+        const p = new URL(l.listingUrl).pathname;
         if (p.split("/").filter(Boolean).length < 2) return false;
-        // Reject known category page patterns
-        if (/^\/(it-and-software|california|texas|florida|new-york|technology-businesses|business-for-sale|businesses-for-sale)\/?$/i.test(p)) return false;
+        if (/^\/(it-and-software|california|texas|florida|new-york|technology-businesses|business-for-sale|businesses-for-sale|it-services)\/?$/i.test(p)) return false;
         return true;
       } catch { return false; }
-    });
+    }).map(l => ({ ...l, source: l.source || source }));
   } catch(e) {
     console.log(`    parse error: ${e.message}`);
     return [];
@@ -141,15 +193,11 @@ If no valid individual listing URLs found: []`
 // ── BUILD EMAIL ───────────────────────────────────────────────
 function buildEmail(newListings, otherListings, date, total) {
   const card = (l) => {
-    // Convert URL slug to readable title if name is missing
-    const title = l.name || l.listingUrl.split("/").filter(Boolean).slice(-2,-1)[0]?.replace(/-/g," ") || "View Listing";
+    const title  = l.name || l.listingUrl.split("/").filter(Boolean).slice(-2,-1)[0]?.replace(/-/g," ") || "View Listing";
     const source = l.source || new URL(l.listingUrl).hostname.replace("www.","");
-
     return `
   <tr><td style="padding:16px 0;border-bottom:1px solid #1e1e1e;vertical-align:top;">
-    <p style="margin:0 0 3px;color:#555;font-size:11px;font-weight:600;">
-      ${source}${l.listedDate ? ` · ${l.listedDate}` : ""}${l.isNew ? ` · <span style="color:#3b82f6;font-weight:700;">NEW</span>` : ""}
-    </p>
+    <p style="margin:0 0 3px;color:#555;font-size:11px;font-weight:600;">${source}${l.listedDate ? ` · ${l.listedDate}` : ""}${l.isNew ? ` &nbsp;<span style="color:#3b82f6;font-weight:700;background:#1d3a6622;border:1px solid #3b82f644;border-radius:4px;padding:1px 6px;">NEW</span>` : ""}</p>
     <h3 style="margin:0 0 4px;color:#f0e6cc;font-size:14px;font-family:Georgia,serif;font-weight:normal;">${title}</h3>
     ${l.location ? `<p style="margin:0 0 6px;color:#666;font-size:12px;">📍 ${l.location}</p>` : ""}
     ${l.description ? `<p style="margin:0 0 8px;color:#999;font-size:13px;line-height:1.5;">${l.description}</p>` : ""}
@@ -164,18 +212,21 @@ function buildEmail(newListings, otherListings, date, total) {
   };
 
   const sectionHeader = (label, count, color) =>
-    `<tr><td style="padding:18px 0 2px;"><p style="margin:0;color:${color};font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">${label} (${count})</p></td></tr>`;
+    `<tr><td style="padding:20px 0 4px;"><p style="margin:0;color:${color};font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">${label} &nbsp;<span style="font-weight:400;opacity:.6;">(${count})</span></p></td></tr>`;
+
+  const divider =
+    `<tr><td style="height:1px;background:#1e1e1e;padding:0;margin:8px 0;"></td></tr>`;
 
   const newSection = newListings.length > 0 ? `
-    ${sectionHeader("🆕 New — Listed in Last 14 Days", newListings.length, "#3b82f6")}
+    ${sectionHeader("🆕 New — Listed in Last 3 Weeks", newListings.length, "#3b82f6")}
     ${newListings.map(card).join("")}
-    <tr><td style="height:1px;background:#222;padding:0;"></td></tr>` : "";
+    ${divider}` : "";
 
   const otherSection = `
-    ${sectionHeader("All Listings", otherListings.length, "#666")}
+    ${sectionHeader("All Other Listings", otherListings.length, "#555")}
     ${otherListings.length > 0
       ? otherListings.map(card).join("")
-      : `<tr><td style="padding:20px 0;text-align:center;color:#444;font-size:13px;">No listings found today.</td></tr>`}`;
+      : `<tr><td style="padding:20px 0;text-align:center;color:#444;font-size:13px;">No additional listings today.</td></tr>`}`;
 
   const gatedRows = GATED_SOURCES.map(s => `
     <tr><td style="padding:6px 0;border-bottom:1px solid #161616;">
@@ -194,10 +245,10 @@ function buildEmail(newListings, otherListings, date, total) {
       <td>
         <span style="background:#c8a84b;border-radius:4px;display:inline-block;width:20px;height:20px;text-align:center;line-height:20px;font-size:10px;color:#0a0a0a;font-weight:900;margin-bottom:7px;">◈</span>
         <h1 style="margin:0;color:#f0e6cc;font-size:18px;font-family:Georgia,serif;font-weight:normal;">M&amp;A Deal Digest</h1>
-        <p style="margin:3px 0 0;color:#333;font-size:11px;">${date} · ${total} listings · ${newListings.length} new in last 14 days</p>
+        <p style="margin:3px 0 0;color:#333;font-size:11px;">${date} · ${total} listings · ${newListings.length} new in last 3 weeks</p>
       </td>
       <td align="right" style="vertical-align:top;white-space:nowrap;">
-        <p style="margin:2px 0;color:#3b82f6;font-size:12px;">🆕 ${newListings.length} New</p>
+        <p style="margin:2px 0;color:#3b82f6;font-size:12px;">🆕 ${newListings.length} New (3 wks)</p>
         <p style="margin:2px 0;color:#888;font-size:12px;">◎ ${otherListings.length} Other</p>
       </td>
     </tr></table>
@@ -220,64 +271,63 @@ function buildEmail(newListings, otherListings, date, total) {
   </td></tr>
 
   <tr><td style="background:#060606;border:1px solid #1e1e1e;border-top:none;border-radius:0 0 10px 10px;padding:12px 26px;text-align:center;">
-    <p style="margin:0;color:#1e1e1e;font-size:10px;">M&amp;A Sourcing Agent · Powered by Claude</p>
+    <p style="margin:0;color:#1e1e1e;font-size:10px;">M&amp;A Sourcing Agent · ${SEARCH_QUERIES.length} searches daily · Powered by Claude</p>
   </td></tr>
 
 </table></td></tr></table>
 </body></html>`;
 }
 
-// ── SEND EMAIL ────────────────────────────────────────────────
 async function sendEmail(html, newCount, total) {
-  const subject = `M&A Digest ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})} — ${newCount} new · ${total} total listings`;
+  const subject = `M&A Digest ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})} — ${newCount} new (3 wks) · ${total} total`;
   const res = await postResend({ from: EMAIL_FROM, to: [EMAIL_TO], subject, html });
   if (res.error) throw new Error(`Resend: ${res.error.message || JSON.stringify(res.error)}`);
   console.log(`✓ Email sent (id: ${res.id})`);
 }
 
-// ── MAIN ──────────────────────────────────────────────────────
 async function main() {
-  console.log(`\n◈ M&A Sourcing Agent — ${new Date().toDateString()}\n`);
+  console.log(`\n◈ M&A Sourcing Agent — ${new Date().toDateString()}`);
+  console.log(`  ${SEARCH_QUERIES.length} queries across ${[...new Set(SEARCH_QUERIES.map(q=>q.src))].length} source categories\n`);
 
   if (!ANTHROPIC_API_KEY) throw new Error("Missing ANTHROPIC_API_KEY");
   if (!RESEND_API_KEY)    throw new Error("Missing RESEND_API_KEY");
   if (!EMAIL_TO)          throw new Error("Missing EMAIL_TO");
   if (!EMAIL_FROM)        throw new Error("Missing EMAIL_FROM");
 
-  console.log(`① Running ${SEARCH_QUERIES.length} searches...`);
   const allListings = [];
   const seenUrls    = new Set();
+  const bySrc       = {};
 
-  for (const query of SEARCH_QUERIES) {
-    process.stdout.write(`  · "${query.slice(0,55)}..." `);
+  for (const { q, src } of SEARCH_QUERIES) {
+    process.stdout.write(`  [${src}] ${q.slice(0,50)}... `);
     try {
-      const results = await searchForListings(query);
+      const results = await searchForListings(q, src);
       let added = 0;
       for (const l of results) {
         if (seenUrls.has(l.listingUrl)) continue;
         seenUrls.add(l.listingUrl);
         allListings.push(l);
+        bySrc[src] = (bySrc[src]||0) + 1;
         added++;
       }
-      console.log(`${added} listings`);
+      console.log(`${added}`);
     } catch(e) {
-      console.log(`error: ${e.message}`);
+      console.log(`ERR: ${e.message}`);
     }
     await sleep(1200);
   }
 
-  console.log(`\n  Total: ${allListings.length} unique listings`);
-  allListings.forEach(l => console.log(`  · [${l.source||"?"}] ${l.name} — ${l.listingUrl}`));
+  console.log(`\n  Results by source:`);
+  Object.entries(bySrc).sort((a,b)=>b[1]-a[1]).forEach(([s,n]) => console.log(`    ${s}: ${n}`));
+  console.log(`  Total: ${allListings.length} unique listings\n`);
 
   const newListings   = allListings.filter(l => l.isNew);
   const otherListings = allListings.filter(l => !l.isNew);
 
-  console.log(`\n② Sending email...`);
   const date = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
   const html = buildEmail(newListings, otherListings, date, allListings.length);
   await sendEmail(html, newListings.length, allListings.length);
-
-  console.log("\n✓ Done.\n");
+  console.log("✓ Done.\n");
 }
 
 main().catch(err => { console.error("\n✗ Failed:", err.message); process.exit(1); });
