@@ -14,28 +14,24 @@ const EMAIL_FROM = process.env.EMAIL_FROM;               // e.g. digest@yourdoma
 // ── YOUR ACQUISITION CRITERIA ────────────────────────────────
 // Edit these to match your thesis. Commit and push to update.
 const CRITERIA = {
-  sectors: "SaaS, B2B software, e-commerce enablement",
-  geography: "United States, United Kingdom, Canada, Australia",
-  revenueMin: "$500,000",
+  sectors: "IT Staffing, IT Consulting, IT Managed Service Provider, IT MSP",
+  geography: "United States, Canada",
+  revenueMin: "$750,000",
   revenueMax: "$10,000,000",
   ebitdaMin: "$100,000",
-  ebitdaMax: "$3,000,000",
-  multipleMax: "6x EBITDA",
+  ebitdaMax: "$5,000,000",
+  multipleMax: "10x EBITDA",
   mustHave: [
-    "Recurring or subscription revenue",
-    "Profitable for at least 2 years",
-    "Founder willing to stay for 6-month handover",
-    "B2B customer base",
-    "No single customer >30% of revenue",
+    "Low client/customer concentration",
   ],
   dealBreakers: [
-    "No brick-and-mortar retail",
-    "No pre-revenue or loss-making businesses",
-    "No single-customer concentration above 40%",
-    "No highly regulated industries (pharma, finance)",
   ],
-  sources: ["BizBuySell", "Acquire.com", "Flippa", "Empire Flippers", "DealStream"],
-  notes: "Prefer bootstrapped businesses with strong retention and low churn. Ideally asset-light.",
+  sources: [
+  "BizBuySell", "BusinessBroker.net", "BizQuest", "DealStream", "BusinessesForSale.com",
+  "IT ExchangeNet", "Synergy Business Brokers", "Brampton Capital", "WebsiteClosers",
+  "Axial.net", "FOCUS Investment Banking", "Sunbelt Business Brokers", "Murphy Business"
+],
+  notes: "",
 };
 // ─────────────────────────────────────────────────────────────
 
