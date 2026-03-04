@@ -1,7 +1,6 @@
 // ============================================================
-// M&A Sourcing Agent
-// Extracts listing details from Google search snippets.
-// No page fetching needed — works around 403 blocks.
+// M&A Sourcing Agent — Rate-limit safe edition
+// Uses broad queries + exponential backoff on rate limit errors
 // ============================================================
 
 const https = require("https");
@@ -29,70 +28,18 @@ const GATED_SOURCES = [
   { name:"Exit Factor",              url:"https://www.exitfactor.com/businesses-for-sale/",         note:"Tech-enabled businesses." },
 ];
 
-// ── SEARCH QUERIES ────────────────────────────────────────────
-// Grouped by source. For poorly-indexed sites we use open-web
-// queries that still surface their listings via aggregators,
-// Google cache, and cross-listing sites.
+// ── BROAD QUERIES — fewer calls, more results each ───────────
+// Each query is designed to return 5-10+ listings per search.
+// We wait 65 seconds between each to reset the token rate limit.
 const SEARCH_QUERIES = [
-
-  // ── BizBuySell (well indexed, use site: for precision)
-  { q: 'site:bizbuysell.com/business-opportunity "IT staffing" OR "staff augmentation"',            src: "BizBuySell" },
-  { q: 'site:bizbuysell.com/business-opportunity "managed service provider" OR "managed services"', src: "BizBuySell" },
-  { q: 'site:bizbuysell.com/business-opportunity "MSP" profitable recurring revenue',               src: "BizBuySell" },
-  { q: 'site:bizbuysell.com/business-opportunity "IT consulting" OR "technology consulting"',       src: "BizBuySell" },
-  { q: 'site:bizbuysell.com/business-opportunity "IT services" staffing OR consulting OR managed',  src: "BizBuySell" },
-
-  // ── BizQuest
-  { q: 'site:bizquest.com "IT staffing" OR "managed service" OR "IT consulting" OR "MSP" for sale', src: "BizQuest" },
-  { q: 'site:bizquest.com "technology staffing" OR "IT services" OR "managed IT" for sale',         src: "BizQuest" },
-
-  // ── BusinessBroker.net
-  { q: 'site:businessbroker.net "IT staffing" OR "managed service" OR "IT consulting" for sale',   src: "BusinessBroker.net" },
-  { q: 'site:businessbroker.net "MSP" OR "technology staffing" OR "IT services" for sale',         src: "BusinessBroker.net" },
-
-  // ── BusinessesForSale.com
-  { q: 'site:businessesforsale.com "IT staffing" OR "managed service" OR "IT consulting" for sale United States', src: "BusinessesForSale.com" },
-  { q: 'site:businessesforsale.com "MSP" OR "technology staffing" OR "IT services" for sale',      src: "BusinessesForSale.com" },
-
-  // ── DealStream — try site: and natural language
-  { q: 'site:dealstream.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',       src: "DealStream" },
-  { q: 'dealstream.com IT staffing OR managed service provider OR MSP for sale listing 2025',       src: "DealStream" },
-
-  // ── Synergy Business Brokers
-  { q: 'site:synergybb.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',        src: "Synergy Business Brokers" },
-  { q: 'synergybb.com IT staffing OR MSP OR managed service provider for sale listing',             src: "Synergy Business Brokers" },
-
-  // ── IT ExchangeNet
-  { q: 'site:itexchangenet.com "for sale" IT OR MSP OR staffing OR consulting',                    src: "IT ExchangeNet" },
-  { q: 'itexchangenet.com IT staffing OR MSP OR managed service provider for sale',                 src: "IT ExchangeNet" },
-
-  // ── Brampton Capital
-  { q: 'site:bramptoncapital.com "managed service" OR "IT staffing" OR "MSP" for sale',            src: "Brampton Capital" },
-  { q: 'bramptoncapital.com MSP OR managed service provider OR IT staffing for sale listing',       src: "Brampton Capital" },
-
-  // ── WebsiteClosers
-  { q: 'site:websiteclosers.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting"',   src: "WebsiteClosers" },
-
-  // ── Lion Business Brokers
-  { q: 'site:lionbusinessbrokers.com "IT staffing" OR "managed service" OR "IT consulting"',       src: "Lion Business Brokers" },
-  { q: 'lionbusinessbrokers.com IT staffing OR MSP OR managed service for sale listing',            src: "Lion Business Brokers" },
-
-  // ── Acquire.com (tech-focused marketplace)
-  { q: 'site:acquire.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting" for sale', src: "Acquire.com" },
-
-  // ── MicroAcquire / Acquire
-  { q: 'acquire.com MSP OR "managed service provider" OR "IT staffing" for sale profitable',       src: "Acquire.com" },
-
-  // ── Open web — catches listings on ANY platform
-  { q: '"IT staffing company for sale" "asking price" OR "revenue" 2025 United States',            src: "General Web" },
-  { q: '"IT staffing business for sale" profitable 2025 United States OR Canada',                  src: "General Web" },
-  { q: '"managed service provider for sale" "asking price" OR "cash flow" 2025 United States',     src: "General Web" },
-  { q: '"MSP for sale" profitable revenue 2025 United States OR Canada',                           src: "General Web" },
-  { q: '"IT consulting firm for sale" "asking price" OR revenue 2025 United States',               src: "General Web" },
-  { q: '"IT consulting company for sale" profitable 2025 United States OR Canada',                 src: "General Web" },
-  { q: '"managed IT services" company for sale 2025 United States revenue profitable',             src: "General Web" },
-  { q: '"technology staffing" company for sale 2025 United States asking price',                   src: "General Web" },
-  { q: 'acquire "IT staffing" OR "managed service provider" OR "MSP" business for sale 2025',     src: "General Web" },
+  { q: 'site:bizbuysell.com/business-opportunity "IT staffing" OR "managed service provider" OR "MSP" OR "IT consulting" for sale', src: "BizBuySell" },
+  { q: 'site:bizbuysell.com/business-opportunity "managed IT" OR "IT services" OR "technology staffing" OR "staff augmentation" for sale', src: "BizBuySell" },
+  { q: 'site:bizquest.com OR site:businessbroker.net "IT staffing" OR "managed service" OR "MSP" OR "IT consulting" for sale', src: "BizQuest / BusinessBroker" },
+  { q: 'site:businessesforsale.com OR site:websiteclosers.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting" for sale', src: "BusinessesForSale / WebsiteClosers" },
+  { q: 'synergybb.com OR itexchangenet.com OR bramptoncapital.com "IT staffing" OR "managed service" OR "MSP" for sale listing', src: "Synergy / ITExchangeNet / Brampton" },
+  { q: 'dealstream.com OR lionbusinessbrokers.com "IT staffing" OR "managed service" OR "MSP" OR "IT consulting" for sale listing 2025', src: "DealStream / Lion" },
+  { q: '"IT staffing company for sale" OR "MSP for sale" OR "managed service provider for sale" 2025 United States asking price revenue', src: "General Web" },
+  { q: '"IT consulting firm for sale" OR "IT services company for sale" OR "technology staffing for sale" 2025 United States profitable', src: "General Web" },
 ];
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -102,8 +49,16 @@ function postAnthropic(body) {
     const payload = JSON.stringify(body);
     const req = https.request({
       hostname: "api.anthropic.com", path: "/v1/messages", method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload), "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }
-    }, res => { let d = ""; res.on("data", c => d += c); res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } }); });
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01"
+      }
+    }, res => {
+      let d = ""; res.on("data", c => d += c);
+      res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
+    });
     req.on("error", reject); req.write(payload); req.end();
   });
 }
@@ -113,44 +68,60 @@ function postResend(body) {
     const payload = JSON.stringify(body);
     const req = https.request({
       hostname: "api.resend.com", path: "/emails", method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload), "Authorization": `Bearer ${RESEND_API_KEY}` }
-    }, res => { let d = ""; res.on("data", c => d += c); res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } }); });
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        "Authorization": `Bearer ${RESEND_API_KEY}`
+      }
+    }, res => {
+      let d = ""; res.on("data", c => d += c);
+      res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
+    });
     req.on("error", reject); req.write(payload); req.end();
   });
 }
 
-// ── SEARCH AND EXTRACT ────────────────────────────────────────
-async function searchForListings(query, source) {
+// ── SEARCH WITH RETRY ON RATE LIMIT ──────────────────────────
+async function searchWithRetry(query, source, attempt = 1) {
   const threeWeeksAgo = new Date(Date.now() - THREE_WEEKS_MS);
 
   const res = await postAnthropic({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 1500,
+    max_tokens: 2000,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{
       role: "user",
       content: `Search: ${query}
 
-Return a JSON array of individual business-for-sale listings found. Only include URLs that point to a specific listing (with a title slug or numeric ID), not category/browse pages.
-
+Find all individual business-for-sale listings in results. Extract from snippets.
+Only include URLs with a specific listing slug/ID, not category pages.
 Mark isNew:true if listed after ${threeWeeksAgo.toDateString()}.
 
-JSON only, no markdown:
-[{"name":"title","listingUrl":"exact url","source":"${source}","askingPrice":"$XM or null","revenue":"$XM or null","ebitda":"$Xk or null","location":"City, ST or null","description":"1-2 sentences","isNew":false,"listedDate":"date or null"}]
-
+Return JSON array only:
+[{"name":"title","listingUrl":"exact url","source":"${source}","askingPrice":"$XM or null","revenue":"$XM or null","ebitda":"$Xk or null","location":"City,ST or null","description":"1-2 sentences","isNew":false,"listedDate":"date or null"}]
 If nothing: []`
     }]
   });
 
-  if (res.error) throw new Error(res.error.message);
-  const text = (res.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+  // Handle rate limit — wait 65s and retry up to 3 times
+  if (res.error && res.error.message && res.error.message.includes("rate limit")) {
+    if (attempt <= 3) {
+      console.log(`    rate limit hit, waiting 65s (attempt ${attempt}/3)...`);
+      await sleep(65000);
+      return searchWithRetry(query, source, attempt + 1);
+    } else {
+      throw new Error("Rate limit: max retries exceeded");
+    }
+  }
 
+  if (res.error) throw new Error(res.error.message);
+
+  const text = (res.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
   try {
     const match = text.replace(/```json|```/g,"").match(/\[[\s\S]*\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]);
     if (!Array.isArray(parsed)) return [];
-
     return parsed.filter(l => {
       if (!l.name || !l.listingUrl) return false;
       try {
@@ -190,13 +161,10 @@ function buildEmail(newListings, otherListings, date, total) {
   const sectionHeader = (label, count, color) =>
     `<tr><td style="padding:20px 0 4px;"><p style="margin:0;color:${color};font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">${label} &nbsp;<span style="font-weight:400;opacity:.6;">(${count})</span></p></td></tr>`;
 
-  const divider =
-    `<tr><td style="height:1px;background:#1e1e1e;padding:0;margin:8px 0;"></td></tr>`;
-
   const newSection = newListings.length > 0 ? `
     ${sectionHeader("🆕 New — Listed in Last 3 Weeks", newListings.length, "#3b82f6")}
     ${newListings.map(card).join("")}
-    ${divider}` : "";
+    <tr><td style="height:1px;background:#1e1e1e;padding:0;"></td></tr>` : "";
 
   const otherSection = `
     ${sectionHeader("All Other Listings", otherListings.length, "#555")}
@@ -215,7 +183,6 @@ function buildEmail(newListings, otherListings, date, total) {
 <body style="margin:0;padding:0;background:#0a0a0a;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:28px 16px;">
 <tr><td align="center"><table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;">
-
   <tr><td style="background:#0f0f0f;border:1px solid #1e1e1e;border-radius:10px 10px 0 0;padding:22px 26px;border-bottom:none;">
     <table width="100%" cellpadding="0" cellspacing="0"><tr>
       <td>
@@ -229,27 +196,22 @@ function buildEmail(newListings, otherListings, date, total) {
       </td>
     </tr></table>
   </td></tr>
-
   <tr><td style="background:#0b0b0b;border:1px solid #1e1e1e;border-top:none;border-bottom:none;padding:8px 26px;">
     <p style="margin:0;color:#2e2e2e;font-size:11px;font-family:monospace;">IT Staffing · IT Consulting · MSP · US/Canada/LatAm · $1M–$30M rev · max 10x EBITDA</p>
   </td></tr>
-
   <tr><td style="background:#0f0f0f;border:1px solid #1e1e1e;border-top:none;padding:0 26px 16px;">
     <table width="100%" cellpadding="0" cellspacing="0">
       ${newSection}
       ${otherSection}
     </table>
   </td></tr>
-
   <tr><td style="background:#090909;border:1px solid #1e1e1e;border-top:none;padding:18px 26px;">
     <p style="margin:0 0 10px;color:#252525;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">Also Check — Login Required</p>
     <table width="100%" cellpadding="0" cellspacing="0">${gatedRows}</table>
   </td></tr>
-
   <tr><td style="background:#060606;border:1px solid #1e1e1e;border-top:none;border-radius:0 0 10px 10px;padding:12px 26px;text-align:center;">
     <p style="margin:0;color:#1e1e1e;font-size:10px;">M&amp;A Sourcing Agent · ${SEARCH_QUERIES.length} searches daily · Powered by Claude</p>
   </td></tr>
-
 </table></td></tr></table>
 </body></html>`;
 }
@@ -263,7 +225,7 @@ async function sendEmail(html, newCount, total) {
 
 async function main() {
   console.log(`\n◈ M&A Sourcing Agent — ${new Date().toDateString()}`);
-  console.log(`  ${SEARCH_QUERIES.length} queries across ${[...new Set(SEARCH_QUERIES.map(q=>q.src))].length} source categories\n`);
+  console.log(`  ${SEARCH_QUERIES.length} broad queries · 65s pause between each\n`);
 
   if (!ANTHROPIC_API_KEY) throw new Error("Missing ANTHROPIC_API_KEY");
   if (!RESEND_API_KEY)    throw new Error("Missing RESEND_API_KEY");
@@ -274,10 +236,13 @@ async function main() {
   const seenUrls    = new Set();
   const bySrc       = {};
 
-  for (const { q, src } of SEARCH_QUERIES) {
-    process.stdout.write(`  [${src}] ${q.slice(0,50)}... `);
+  for (let i = 0; i < SEARCH_QUERIES.length; i++) {
+    const { q, src } = SEARCH_QUERIES[i];
+    console.log(`[${i+1}/${SEARCH_QUERIES.length}] ${src}`);
+    console.log(`  query: ${q.slice(0,80)}...`);
+
     try {
-      const results = await searchForListings(q, src);
+      const results = await searchWithRetry(q, src);
       let added = 0;
       for (const l of results) {
         if (seenUrls.has(l.listingUrl)) continue;
@@ -286,16 +251,21 @@ async function main() {
         bySrc[src] = (bySrc[src]||0) + 1;
         added++;
       }
-      console.log(`${added}`);
+      console.log(`  → ${added} listings found\n`);
     } catch(e) {
-      console.log(`ERR: ${e.message}`);
+      console.log(`  → ERROR: ${e.message}\n`);
     }
-    await sleep(4000); // stay under 30k tokens/min rate limit
+
+    // Wait 65s between queries to fully reset the per-minute token limit
+    if (i < SEARCH_QUERIES.length - 1) {
+      console.log(`  waiting 65s before next query...`);
+      await sleep(65000);
+    }
   }
 
-  console.log(`\n  Results by source:`);
-  Object.entries(bySrc).sort((a,b)=>b[1]-a[1]).forEach(([s,n]) => console.log(`    ${s}: ${n}`));
-  console.log(`  Total: ${allListings.length} unique listings\n`);
+  console.log(`Results by source:`);
+  Object.entries(bySrc).sort((a,b)=>b[1]-a[1]).forEach(([s,n]) => console.log(`  ${s}: ${n}`));
+  console.log(`Total: ${allListings.length} unique listings\n`);
 
   const newListings   = allListings.filter(l => l.isNew);
   const otherListings = allListings.filter(l => !l.isNew);
