@@ -14,24 +14,15 @@ const EMAIL_FROM = process.env.EMAIL_FROM;               // e.g. digest@yourdoma
 // ── YOUR ACQUISITION CRITERIA ────────────────────────────────
 // Edit these to match your thesis. Commit and push to update.
 const CRITERIA = {
-  sectors: "IT Staffing, IT Consulting, IT Managed Service Provider, IT MSP",
-  geography: "United States, Canada",
-  revenueMin: "$750,000",
-  revenueMax: "$10,000,000",
-  ebitdaMin: "$100,000",
-  ebitdaMax: "$5,000,000",
+  sectors: "IT Staffing, IT Consulting, IT Managed Services, IT MSP",
+  geography: "United States, Canada, Latin America",
+  revenueMin: "$1,000,000",
+  revenueMax: "$30,000,000",
+  ebitdaMin: "$300,000",
+  ebitdaMax: "$6,000,000",
   multipleMax: "10x EBITDA",
-  mustHave: [
-    "Low client/customer concentration",
-  ],
-  dealBreakers: [
-  ],
-  sources: [
-  "BizBuySell", "BusinessBroker.net", "BizQuest", "DealStream", "BusinessesForSale.com",
-  "IT ExchangeNet", "Synergy Business Brokers", "Brampton Capital", "WebsiteClosers",
-  "Axial.net", "FOCUS Investment Banking", "Sunbelt Business Brokers", "Murphy Business"
-],
-  notes: "",
+  sources: ["BizBuySell", "Acquire.com", "Flippa", "Empire Flippers", "DealStream"],
+  notes: "Prefer low client concentration. Good gross margin. Good net income/revenue margin.",
 };
 // ─────────────────────────────────────────────────────────────
 
@@ -103,7 +94,7 @@ Return ONLY a valid JSON array, no markdown fences, no preamble:
     "score": 85,
     "tier": "STRONG",
     "source": "BizBuySell",
-    "listingUrl": "https://www.bizbuysell.com/listing/sample-12345",
+    "listingUrl": null,
     "headline": "One-sentence description of what the business does",
     "whyFits": "2-3 sentences explaining alignment with criteria",
     "concerns": "1-2 sentences on risks or gaps, or null if none",
@@ -254,9 +245,46 @@ async function main() {
   if (!EMAIL_TO) throw new Error("Missing EMAIL_TO");
   if (!EMAIL_FROM) throw new Error("Missing EMAIL_FROM");
 
+  // Real pre-filtered search URLs per source — no more broken links
+  const SOURCE_URLS = {
+    "BizBuySell":               "https://www.bizbuysell.com/it-and-software-service-businesses-for-sale/",
+    "BusinessBroker.net":       "https://www.businessbroker.net/business-for-sale/technology-businesses/",
+    "BizQuest":                 "https://www.bizquest.com/business-for-sale/technology-internet-businesses/",
+    "DealStream":               "https://dealstream.com/it-businesses-for-sale",
+    "BusinessesForSale.com":    "https://www.businessesforsale.com/search/technology-businesses-for-sale",
+    "IT ExchangeNet":           "https://www.itexchangenet.com/for-sale",
+    "Synergy Business Brokers": "https://synergybb.com/businesses-for-sale/it-services-companies-for-sale/",
+    "Brampton Capital":         "https://bramptoncapital.com/managed-services-companies-for-sale/",
+    "WebsiteClosers":           "https://www.websiteclosers.com/businesses-for-sale/",
+    "Axial.net":                "https://www.axial.net/forum/companies/internet-software-services-m-a-advisory-firms/",
+    "FOCUS Investment Banking": "https://focusbankers.com/it-services-msp/",
+    "Sunbelt Business Brokers": "https://www.sunbeltnetwork.com/businesses-for-sale/?industry=Technology",
+    "Murphy Business":          "https://www.murphybusiness.com/listings/?industry=technology",
+    "Empire Flippers":          "https://empireflippers.com/marketplace/",
+    "Flippa":                   "https://flippa.com/websites/for-sale",
+    "Acquire.com":              "https://acquire.com/search/",
+    "Transworld Business Advisors": "https://www.tworld.com/buy-a-business/business-listing-search",
+    "Sunbelt Business Brokers":     "https://www.sunbeltnetwork.com/businesses-for-sale/?industry=Technology",
+    "Murphy Business Brokers":      "https://www.murphybusiness.com/listings/?industry=technology",
+    "RoseBiz":                      "https://www.rosebiz.com/businesses-for-sale/",
+    "Corum Group":                  "https://corumgroup.com/transactions/",
+    "Lion Business Brokers":        "https://lionbusinessbrokers.com/businesses-for-sale/",
+    "Griffin Financial Group":      "https://www.griffinfingroup.com/industries/staffing/",
+    "MKLINK MSP Marketplace":       "https://mklink.org/mergers-acquisitions/",
+    "Colonnade Advisors":           "https://coladv.com/transactions/",
+    "Generational Equity":          "https://www.genequity.com/businesses-for-sale/",
+    "Benchmark International":      "https://www.benchmarkcorporate.com/businesses-for-sale",
+    "Exit Factor":                  "https://www.exitfactor.com/businesses-for-sale/",
+  };
+
   console.log("① Fetching and scoring listings via Claude...");
   const listings = await fetchListings();
   console.log(`   Found ${listings.length} listings`);
+
+  // Attach real URLs based on the source Claude assigned each listing
+  listings.forEach(l => {
+    l.listingUrl = SOURCE_URLS[l.source] || "https://www.bizbuysell.com/it-and-software-service-businesses-for-sale/";
+  });
 
   const sorted = listings.sort((a, b) => b.score - a.score);
   const strong = sorted.filter((l) => l.score >= 75);
