@@ -125,44 +125,20 @@ async function searchForListings(query, source) {
 
   const res = await postAnthropic({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 2500,
+    max_tokens: 1500,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{
       role: "user",
-      content: `Search for: ${query}
+      content: `Search: ${query}
 
-Extract every individual business-for-sale listing from the search results. Get all details visible in the snippets — title, price, revenue, location, description, date.
+Return a JSON array of individual business-for-sale listings found. Only include URLs that point to a specific listing (with a title slug or numeric ID), not category/browse pages.
 
-VALID listing URL examples (specific listings, not browse pages):
-- https://www.bizbuysell.com/business-opportunity/some-title/1234567/
-- https://www.bizquest.com/ad/some-title/BQ1234/
-- https://www.businessbroker.net/listing/some-title/
-- https://dealstream.com/deal/buy/some-title--123456
-- https://synergybb.com/us-businesses-for-sale/some-title/
-- https://websiteclosers.com/listing/some-title/
-- https://lionbusinessbrokers.com/listing/some-title/
+Mark isNew:true if listed after ${threeWeeksAgo.toDateString()}.
 
-INVALID (reject these):
-- Any URL that is just a category/browse page with no specific listing ID or title slug
-- Homepages
+JSON only, no markdown:
+[{"name":"title","listingUrl":"exact url","source":"${source}","askingPrice":"$XM or null","revenue":"$XM or null","ebitda":"$Xk or null","location":"City, ST or null","description":"1-2 sentences","isNew":false,"listedDate":"date or null"}]
 
-Today is ${new Date().toDateString()}. Mark isNew:true if listed after ${threeWeeksAgo.toDateString()}.
-
-Return ONLY a raw JSON array, no markdown:
-[{
-  "name": "exact listing title",
-  "listingUrl": "exact URL — do not modify",
-  "source": "${source}",
-  "askingPrice": "$X.XM or null",
-  "revenue": "$X.XM or null",
-  "ebitda": "$XXXk or null",
-  "location": "City, State or null",
-  "description": "2-3 sentences from snippet",
-  "isNew": false,
-  "listedDate": "date string or null"
-}]
-
-If nothing found: []`
+If nothing: []`
     }]
   });
 
@@ -314,7 +290,7 @@ async function main() {
     } catch(e) {
       console.log(`ERR: ${e.message}`);
     }
-    await sleep(1200);
+    await sleep(4000); // stay under 30k tokens/min rate limit
   }
 
   console.log(`\n  Results by source:`);
